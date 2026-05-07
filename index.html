@@ -235,7 +235,7 @@
 
           // 1. 检查版本号（version.json）
           const manifestUrlObj = new URL(manifestUrl);
-          const versionUrl = manifestUrlObj.origin + manifestUrlObj.pathname.replace(/\/[^/]+\.json$/, '/version.json') + '?_t=' + Math.floor(Date.now() / 6000);
+          const versionUrl = manifestUrlObj.origin + manifestUrlObj.pathname.replace(/\/[^/]+\.json$/, '/version.json') + '?_t=' + Math.floor(Date.now() / 1);
           self.postMessage({ type: 'status', msg: '检查版本...' });
           const versionRes = await fetch(versionUrl);
           if (!versionRes.ok) throw new Error(`版本文件请求失败: HTTP ${versionRes.status}`);
@@ -497,25 +497,29 @@
           } catch(e) { hasVersion = false; }
 
           if (hasVersion) {
-            // 有版本号：直接显示数据，不启动Worker，不显示进度条
-            appState.isSeeding = false;
-            els.progressBar.classList.add('hidden');
-            els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden');
-            fetchData(true); if (appState.showChart) updateChart();
-            return;
+            // 有版本号：先加载数据，再启动Worker检查更新
+            // 确保记录列表可见
+            els.skeletonList.classList.add('hidden');
+            els.recordList.classList.remove('hidden');
+            els.loadMoreBtn.classList.remove('hidden');
+            // 先从IndexedDB加载数据（必须在isSeeding之前）
+            fetchData(true);
+            if (appState.showChart) updateChart();
+            // 再设置isSeeding，让Worker在后台检查
+            appState.isSeeding = true;
+          } else {
+            // 无版本号：显示骨架屏和进度条，启动Worker同步
+            els.skeletonList.classList.remove('hidden'); els.recordList.classList.add('hidden'); els.loadMoreBtn.classList.add('hidden');
+            els.progressBar.classList.remove('hidden'); els.progressBar.style.width = '0%';
           }
-
-          // 无版本号：显示骨架屏和进度条，启动Worker同步
-          els.skeletonList.classList.remove('hidden'); els.recordList.classList.add('hidden'); els.loadMoreBtn.classList.add('hidden');
-          els.progressBar.classList.remove('hidden'); els.progressBar.style.width = '0%';
 
           const worker = new Worker(syncWorkerUrl);
           worker.postMessage({ dbName: DB_NAME, storeName: STORE_NAME, manifestUrl: new URL(MANIFEST_FILE, location.href).href, forceRefresh: false, concurrency: 15, batchSize: 500 });
-          
+
           let initialFetchDone = false, uiUpdateTimer = null;
           worker.onmessage = (e) => {
             const { type, msg, current, total, synced } = e.data;
-            
+
             if (type === 'status' && !initialFetchDone) {
               if (els.seedStatus) els.seedStatus.textContent = msg;
             }
