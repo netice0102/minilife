@@ -68,21 +68,10 @@
     .detail-label { font-size: 13px; color: var(--text-sec); }
     .detail-value { font-size: 14px; color: var(--text-main); }
     
-    /* ✅ 优化：按钮交互与状态过渡 */
-    .load-more-btn {
-      display: block; width: 100%; padding: 12px; margin-top: 16px;
-      background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius);
-      font-size: 14px; font-weight: 500; color: var(--accent); cursor: pointer; text-align: center;
-      transition: background 0.2s var(--ease), transform 0.15s var(--ease), box-shadow 0.2s var(--ease);
-      user-select: none; position: relative; overflow: hidden;
-    }
+    .load-more-btn { display: block; width: 100%; padding: 12px; margin-top: 16px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 14px; font-weight: 500; color: var(--accent); cursor: pointer; text-align: center; transition: background 0.2s var(--ease), transform 0.15s var(--ease); user-select: none; }
     .load-more-btn:hover:not(:disabled) { background: rgba(74, 144, 164, 0.08); }
     .load-more-btn:active:not(:disabled) { transform: scale(0.97); background: rgba(74, 144, 164, 0.15); }
-    .load-more-btn:disabled { 
-      color: var(--text-sec); cursor: default; 
-      transform: none; opacity: 0.7; 
-      background: rgba(245, 245, 240, 0.6);
-    }
+    .load-more-btn:disabled { color: var(--text-sec); cursor: default; transform: none; opacity: 0.7; }
 
     .progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--accent); transition: width 0.3s var(--ease); z-index: 100; }
     .progress-bar.hidden { width: 0; opacity: 0; }
@@ -100,7 +89,7 @@
       .controls-panel { display: none; flex-direction: column; align-items: stretch; padding-bottom: 8px; }
       .controls-panel.open { display: flex; } #toggle-filters { display: block; }
       .item-header { padding: 12px 16px; gap: 8px; } .item-main { flex: 1 1 auto; min-width: 0; gap: 8px; }
-      .meta-time { font-size: 12px; min-width: auto; } .meta-event { font-size: 14px; max-width: 80px; }
+      .meta-time { font-size: 12px; min-width: auto; } .meta-event { font-size: 14px; max-width: 100px; }
       .meta-duration { font-size: 12px; } .meta-mood { width: 24px; height: 24px; font-size: 12px; }
       .meta-tag { font-size: 11px; padding: 3px 8px; } .expand-btn { width: 20px; height: 20px; }
       .expand-btn svg { width: 14px; height: 14px; } .item-meta { gap: 8px; margin-left: auto; }
@@ -151,7 +140,7 @@
     'use strict';
     const DB_NAME = 'minilife-db'; 
     const STORE_NAME = 'records';
-    const DATA_FILE = './data.ndjson'; 
+    const MANIFEST_FILE = './data.json'; // 主配置文件
     
     const els = {
       controls: document.getElementById('controls'), toggleBtn: document.getElementById('toggle-filters'),
@@ -165,70 +154,207 @@
     };
     const MOODS = { happy: { name: '开心', icon: '😊' }, calm: { name: '平静', icon: '🍃' }, focus: { name: '专注', icon: '🎯' }, tired: { name: '疲惫', icon: '☕' }, anxious: { name: '焦虑', icon: '⛈️' } };
     const appState = { filter: { category: '', mood: '', date: '' }, sort: 'time-desc', limit: 10, lastKey: null, hasMore: true, loading: false, isSeeding: false, showChart: false };
-
-    // ========== Inline Worker ==========
-    function seedWorkerLogic() {
-      self.addEventListener('message', async (e) => {
-        const { dbName, storeName, batchSize, dataUrl } = e.data;
-        try {
-          const req = indexedDB.open(dbName, 1);
+    
+    // ========== Inline Worker (使用IDB封装) ==========
+    function syncWorkerLogic() {
+      // ========== IndexedDB 封装 ==========
+      function createIDBHelper(dbName, version, schema) {
+        const open = () => new Promise((resolve, reject) => {
+          const req = indexedDB.open(dbName, version);
           req.onupgradeneeded = (ev) => {
             const db = ev.target.result;
+            if (schema) schema(db);
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        
+        const get = (storeName, key) => open().then(db => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const req = tx.objectStore(storeName).get(key);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        }));
+        
+        const put = (storeName, value, key) => open().then(db => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const req = tx.objectStore(storeName).put(value, key);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        }));
+        
+        const del = (storeName, key) => open().then(db => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const req = tx.objectStore(storeName).delete(key);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        }));
+
+        const delMany = (storeName, keys) => open().then(db => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const store = tx.objectStore(storeName);
+          keys.forEach(key => store.delete(key));
+          tx.oncomplete = resolve;
+          tx.onerror = reject;
+        }));
+
+        const putMany = (storeName, items) => open().then(db => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const store = tx.objectStore(storeName);
+          items.forEach(item => store.put(item));
+          tx.oncomplete = resolve;
+          tx.onerror = reject;
+        }));
+        
+        const getAll = (storeName) => open().then(db => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const req = tx.objectStore(storeName).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => resolve([]);
+        }));
+        
+        const getMeta = (key) => get('meta', key);
+        const setMeta = (key, value) => put('meta', value, key);
+        
+        return { open, get, put, del, delMany, putMany, getAll, getMeta, setMeta };
+      }
+      
+      self.addEventListener('message', async (e) => {
+        const { dbName, storeName, manifestUrl, forceRefresh = false, concurrency = 10, batchSize = 200 } = e.data;
+        try {
+          const idb = createIDBHelper(dbName, 1, (db) => {
             if (!db.objectStoreNames.contains(storeName)) {
               const store = db.createObjectStore(storeName, { keyPath: 'id' });
-              store.createIndex('time', 'time', { unique: false });
-              store.createIndex('category', 'category', { unique: false });
-              store.createIndex('mood', 'mood', { unique: false });
-              store.createIndex('duration', 'durationMinutes', { unique: false });
+              store.createIndex('time', 'time');
+              store.createIndex('category', 'category');
+              store.createIndex('mood', 'mood');
+              store.createIndex('duration', 'durationMinutes');
             }
-          };
-          const db = await new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+            if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+          });
 
-          self.postMessage({ type: 'status', msg: '正在下载数据...' });
-          const res = await fetch(dataUrl);
-          if (!res.ok) throw new Error('网络请求失败');
+          // 1. 检查版本号（version.json）
+          const manifestUrlObj = new URL(manifestUrl);
+          const versionUrl = manifestUrlObj.origin + manifestUrlObj.pathname.replace(/\/[^/]+\.json$/, '/version.json') + '?_t=' + Math.floor(Date.now() / 6000);
+          self.postMessage({ type: 'status', msg: '检查版本...' });
+          const versionRes = await fetch(versionUrl);
+          if (!versionRes.ok) throw new Error(`版本文件请求失败: HTTP ${versionRes.status}`);
+          const versionData = await versionRes.json();
+          const remoteVer = versionData.ver;
+          const localVer = await idb.getMeta('version');
 
-          self.postMessage({ type: 'status', msg: '正在流式解析 NDJSON...' });
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let processedCount = 0;
-          let batch = [];
+          self.postMessage({ type: 'status', msg: `本地版本: ${localVer || '无'}, 远程版本: ${remoteVer}` });
 
-          const commitBatch = async (items) => {
-            if (items.length === 0) return;
-            const tx = db.transaction(storeName, 'readwrite');
-            const store = tx.objectStore(storeName);
-            items.forEach(item => store.put(item));
-            await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
-          };
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done && !buffer.trim()) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-              try {
-                const raw = JSON.parse(trimmed);
-                batch.push({ ...raw, id: raw.id || `ndjson_${processedCount}`, time: new Date(raw.time).getTime(), createdAt: new Date(raw.createdAt || raw.time).getTime() });
-                processedCount++;
-                if (batch.length >= batchSize) { await commitBatch(batch); batch = []; self.postMessage({ type: 'progress', current: processedCount, total: null }); }
-              } catch (err) {}
-            }
+          // 2. 版本一致且非强制刷新：直接使用 IndexedDB 数据
+          if (localVer === remoteVer && !forceRefresh) {
+            self.postMessage({ type: 'status', msg: '版本一致，使用本地数据' });
+            const storedSynced = (await idb.getMeta('synced_files')) || [];
+            self.postMessage({ type: 'complete', total: 0, synced: true, msg: '已是最新' });
+            return;
           }
-          if (buffer.trim()) { try { const raw = JSON.parse(buffer.trim()); batch.push({ ...raw, id: raw.id || `ndjson_${processedCount}`, time: new Date(raw.time).getTime(), createdAt: new Date(raw.createdAt || raw.time).getTime() }); processedCount++; } catch(e) {} }
-          if (batch.length > 0) await commitBatch(batch);
-          self.postMessage({ type: 'progress', current: processedCount, total: processedCount });
-          self.postMessage({ type: 'complete', total: processedCount });
-        } catch (err) { self.postMessage({ type: 'error', msg: err.message }); }
+
+          // 3. 版本不一致或强制刷新：下载 data.json
+          self.postMessage({ type: 'status', msg: '读取清单...' });
+          const dataUrl = manifestUrl + '?ver=' + encodeURIComponent(remoteVer) + '&_t=' + Math.floor(Date.now() / 60000);
+          const manifestRes = await fetch(dataUrl);
+          if (!manifestRes.ok) throw new Error(`清单请求失败: HTTP ${manifestRes.status}`);
+          let manifest = await manifestRes.json();
+
+          let files = [];
+          let folder = 'data';
+          if (Array.isArray(manifest)) {
+            files = manifest;
+          } else if (manifest.files) {
+            files = manifest.files;
+            folder = manifest.folder || 'data';
+          } else {
+            throw new Error('data.json 格式错误');
+          }
+
+          const dataBaseUrl = manifestUrlObj.origin + manifestUrlObj.pathname.replace(/\/[^/]+\.json$/, '/' + folder + '/');
+          
+          self.postMessage({ type: 'status', msg: `清单包含 ${files.length} 条，核对本地...` });
+          
+          // ========== 以 data.json 为准，同步操作 ==========
+          
+          // 1. 获取当前 synced_files（只用文件列表对比，不需要 getAll()）
+          const storedSynced = (await idb.getMeta('synced_files')) || [];
+          
+          // 2. 基于 data.json 对比（只用文件列表）
+          // 2.1 需要删除的文件：synced_files 有但 data.json 没有
+          const toDeleteFiles = storedSynced.filter(f => !files.includes(f));
+          
+          // 2.2 需要新增的文件：data.json 有但 synced_files 没有
+          const newFilesList = forceRefresh ? files : files.filter(f => !storedSynced.includes(f));
+          
+          // 3. 删除旧记录（只删文件列表中存在的）
+          if (toDeleteFiles.length > 0) {
+            const deleteIds = toDeleteFiles.map(f => f.replace(/\.[^/.]+$/, ''));
+            await idb.delMany(storeName, deleteIds);
+          }
+          
+          // 4. 处理新增文件
+          const localFiles = new Set(storedSynced);
+          if (newFilesList.length > 0) {
+            self.postMessage({ type: 'status', msg: `发现 ${newFilesList.length} 条新记录，同步中...` });
+            let processed = 0;
+            let batch = [];
+            const queue = [...newFilesList];
+            let idx = 0;
+
+            const processFile = async () => {
+              while (idx < queue.length) {
+                const file = queue[idx++];
+                const url = `${dataBaseUrl}${file}`;
+                try {
+                  const res = await fetch(url);
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const raw = await res.json();
+                  
+                  const record = {
+                    ...raw,
+                    id: raw.id || file.replace(/\.[^/.]+$/, ''),
+                    time: raw.time ? new Date(raw.time).getTime() : Date.now()
+                  };
+                  batch.push(record);
+                  localFiles.add(file);
+                  processed++;
+
+                if (batch.length >= batchSize || idx >= queue.length) {
+                  await idb.putMany(storeName, batch);
+                  batch = [];
+                  self.postMessage({ type: 'progress', current: processed, total: newFilesList.length });
+                }
+              } catch (err) {
+                console.warn(`⚠️ 跳过 ${file}:`, err.message);
+                localFiles.add(file); processed++;
+              }
+            }
+          };
+
+          const pool = [];
+          const size = Math.min(concurrency, newFilesList.length);
+          for (let i = 0; i < size; i++) pool.push(processFile());
+          await Promise.all(pool);
+
+          // 5. 更新 synced_files 和版本号
+          await idb.setMeta('synced_files', Array.from(new Set([...storedSynced, ...newFilesList])));
+          await idb.setMeta('version', remoteVer);
+
+          self.postMessage({ type: 'complete', total: processed, synced: false });
+          } else {
+            // 没有新增，但仍需更新版本号
+            await idb.setMeta('synced_files', files);
+            await idb.setMeta('version', remoteVer);
+            self.postMessage({ type: 'complete', total: 0, synced: true, msg: '已是最新' });
+          }
+        } catch (err) { 
+          self.postMessage({ type: 'error', msg: err.message }); 
+        }
       });
     }
-    const workerBlob = new Blob([`(${seedWorkerLogic.toString()})()`], { type: 'application/javascript' });
-    const workerUrl = URL.createObjectURL(workerBlob);
+    const syncWorkerBlob = new Blob([`(${syncWorkerLogic.toString()})()`], { type: 'application/javascript' });
+    const syncWorkerUrl = URL.createObjectURL(syncWorkerBlob);
 
     // ========== 工具函数 ==========
     const formatDate = (ts) => { const d = new Date(ts); const h = String(d.getHours()).padStart(2,'0'), m = String(d.getMinutes()).padStart(2,'0'); const today = new Date(); const yest = new Date(today); yest.setDate(yest.getDate()-1); if(d.toDateString()===today.toDateString()) return `今天 ${h}:${m}`; if(d.toDateString()===yest.toDateString()) return `昨天 ${h}:${m}`; return `${d.getMonth()+1}月${d.getDate()}日 ${h}:${m}`; };
@@ -293,7 +419,7 @@
         const li = document.createElement('li'); li.className = 'record-item animate-in';
         const moodInfo = MOODS[item.mood] || { name: '未知', icon: '❓' };
         const detailsHtml = item.details ? `<div class="detail-row"><span class="detail-label">备注</span><span class="detail-value">${escapeHtml(item.details)}</span></div>` : '';
-        li.innerHTML = `<div class="item-header"><div class="item-main"><span class="meta-time">${formatDate(item.time)}</span><span class="meta-event">${escapeHtml(item.event)}</span><span class="meta-duration">${parseDuration(item.durationMinutes)}</span></div><div class="item-meta"><span class="meta-mood ${item.mood}" aria-label="${moodInfo.name}">${moodInfo.icon}</span><span class="meta-tag">${escapeHtml(item.category)}</span><div class="expand-btn"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></div></div></div><div class="item-details"><div class="details-content">${detailsHtml}<div class="detail-row"><span class="detail-label">创建时间</span><span class="detail-value">${formatDateTime(item.createdAt)}</span></div></div></div>`;
+        li.innerHTML = `<div class="item-header"><div class="item-main"><span class="meta-time">${formatDate(item.time)}</span><span class="meta-event">${escapeHtml(item.event)}</span><span class="meta-duration">${parseDuration(item.durationMinutes)}</span></div><div class="item-meta"><span class="meta-mood ${item.mood}" aria-label="${moodInfo.name}">${moodInfo.icon}</span><span class="meta-tag">${escapeHtml(item.category)}</span><div class="expand-btn"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></div></div></div><div class="item-details"><div class="details-content">${detailsHtml}<div class="detail-row"><span class="detail-label">创建时间</span><span class="detail-value">${formatDateTime(item.time)}</span></div></div></div>`;
         frag.appendChild(li);
       });
       els.recordList.appendChild(frag);
@@ -316,23 +442,16 @@
       requestAnimationFrame(() => els.chartWrapper.querySelectorAll('.chart-bar').forEach(b => b.style.height = b.style.height));
     }
 
-    // ✅ 修复：同步更新按钮状态，彻底解决 setTimeout 导致的“卡在加载中”竞态问题
     async function fetchData(reset = true) {
       if (appState.loading || appState.isSeeding) return;
       appState.loading = true;
-
-      // 1. 同步禁用并更新文案，确保状态绝对一致
-      els.loadMoreBtn.textContent = '加载中...';
-      els.loadMoreBtn.disabled = true;
-
+      els.loadMoreBtn.textContent = '加载中...'; els.loadMoreBtn.disabled = true;
       if (reset) { appState.lastKey = null; appState.hasMore = true; }
       try {
         const { data, hasMore, lastKey } = await queryPage({ filter: appState.filter, sort: appState.sort, limit: appState.limit, lastKey: appState.lastKey });
         appState.lastKey = lastKey; appState.hasMore = hasMore; renderList(data, !reset);
         if (appState.showChart) updateChart();
       } catch (e) { console.error('Query failed:', e); }
-
-      // 2. 请求结束后立即恢复状态
       appState.loading = false;
       els.loadMoreBtn.disabled = !appState.hasMore;
       els.loadMoreBtn.textContent = appState.hasMore ? '加载更多' : '已加载全部';
@@ -353,8 +472,7 @@
       els.sortType.addEventListener('change', (e) => { appState.sort = e.target.value; handleFilterChange(); });
       els.toggleChart.addEventListener('change', (e) => {
         appState.showChart = e.target.checked;
-        if (appState.showChart) updateChart();
-        else els.chartContainer.classList.add('hidden');
+        if (appState.showChart) updateChart(); else els.chartContainer.classList.add('hidden');
       });
       els.loadMoreBtn.addEventListener('click', () => fetchData(false));
       els.recordList.addEventListener('click', (e) => { const card = e.target.closest('.record-item'); if (card) card.classList.toggle('expanded'); });
@@ -364,36 +482,62 @@
       const checkAndSeed = async () => {
         try {
           const dbReq = indexedDB.open(DB_NAME, 1);
-          dbReq.onupgradeneeded = (e) => { const db = e.target.result; if (!db.objectStoreNames.contains(STORE_NAME)) { const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' }); store.createIndex('time', 'time'); store.createIndex('category', 'category'); store.createIndex('mood', 'mood'); store.createIndex('duration', 'durationMinutes'); }};
+          dbReq.onupgradeneeded = (e) => { const db = e.target.result; if (!db.objectStoreNames.contains(STORE_NAME)) { const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' }); store.createIndex('time', 'time'); store.createIndex('category', 'category'); store.createIndex('mood', 'mood'); store.createIndex('duration', 'durationMinutes'); } if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta'); };
           const db = await new Promise((res, rej) => { dbReq.onsuccess = () => res(dbReq.result); dbReq.onerror = () => rej(dbReq.error); });
-          const count = await new Promise(res => { const tx = db.transaction(STORE_NAME, 'readonly'); const req = tx.objectStore(STORE_NAME).count(); req.onsuccess = () => res(req.result); });
           
-          if (count === 0) {
-            appState.isSeeding = true; els.progressBar.classList.remove('hidden'); els.progressBar.style.width = '0%';
-            const worker = new Worker(workerUrl);
-            worker.postMessage({ dbName: DB_NAME, storeName: STORE_NAME, batchSize: 500, dataUrl: new URL(DATA_FILE, location.href).href });
-            let initialFetchDone = false, uiUpdateTimer = null;
-            worker.onmessage = (e) => {
-              const { type, msg, current, total } = e.data;
-              if (type === 'status' && !initialFetchDone) { if (els.seedStatus) els.seedStatus.textContent = msg; }
-              if (type === 'progress' && !initialFetchDone) {
-                const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
-                els.progressBar.style.width = `${Math.max(pct, 5)}%`;
-                clearTimeout(uiUpdateTimer); uiUpdateTimer = setTimeout(() => { if (els.seedStatus) els.seedStatus.textContent = `正在同步... 已处理 ${current} 条`; }, 50);
-                if (current >= 200 || (total && pct >= 20)) {
-                  initialFetchDone = true; clearTimeout(uiUpdateTimer); appState.isSeeding = false;
-                  els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden');
-                  fetchData(true); if (appState.showChart) updateChart();
-                }
+          // 同步检查本地是否有版本号
+          let hasVersion = false;
+          try {
+            const tx = db.transaction('meta', 'readonly');
+            const req = tx.objectStore('meta').get('version');
+            hasVersion = await new Promise((resolve) => {
+              req.onsuccess = () => resolve(!!req.result);
+              req.onerror = () => resolve(false);
+            });
+          } catch(e) { hasVersion = false; }
+
+          if (hasVersion) {
+            // 有版本号：直接显示数据，不启动Worker，不显示进度条
+            appState.isSeeding = false;
+            els.progressBar.classList.add('hidden');
+            els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden');
+            fetchData(true); if (appState.showChart) updateChart();
+            return;
+          }
+
+          // 无版本号：显示骨架屏和进度条，启动Worker同步
+          els.skeletonList.classList.remove('hidden'); els.recordList.classList.add('hidden'); els.loadMoreBtn.classList.add('hidden');
+          els.progressBar.classList.remove('hidden'); els.progressBar.style.width = '0%';
+
+          const worker = new Worker(syncWorkerUrl);
+          worker.postMessage({ dbName: DB_NAME, storeName: STORE_NAME, manifestUrl: new URL(MANIFEST_FILE, location.href).href, forceRefresh: false, concurrency: 15, batchSize: 500 });
+          
+          let initialFetchDone = false, uiUpdateTimer = null;
+          worker.onmessage = (e) => {
+            const { type, msg, current, total, synced } = e.data;
+            
+            if (type === 'status' && !initialFetchDone) {
+              if (els.seedStatus) els.seedStatus.textContent = msg;
+            }
+            if (type === 'progress' && !initialFetchDone) {
+              const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
+              els.progressBar.style.width = `${Math.max(pct, 5)}%`;
+              clearTimeout(uiUpdateTimer); uiUpdateTimer = setTimeout(() => { if (els.seedStatus) els.seedStatus.textContent = msg || `同步中...`; }, 50);
+              if (current >= 200 || (total && pct >= 20)) {
+                initialFetchDone = true; clearTimeout(uiUpdateTimer); appState.isSeeding = false;
+                els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden');
+                els.progressBar.style.width = '100%';
+                setTimeout(() => els.progressBar.classList.add('hidden'), 300);
+                fetchData(true); if (appState.showChart) updateChart();
               }
-              if (type === 'complete') {
-                els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 600);
-                if (!initialFetchDone) { els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden'); fetchData(true); if (appState.showChart) updateChart(); }
-                appState.isSeeding = false; worker.terminate(); URL.revokeObjectURL(workerUrl);
-              }
-              if (type === 'error') { console.error('Seeding failed:', msg); els.skeletonList.innerHTML = `<li class="empty-state">数据加载失败: ${msg}<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">刷新重试</button></li>`; worker.terminate(); }
-            };
-          } else { els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden'); fetchData(true); if(appState.showChart) updateChart(); }
+            }
+            if (type === 'complete') {
+              els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 600);
+              if (!initialFetchDone) { els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden'); fetchData(true); if (appState.showChart) updateChart(); }
+              worker.terminate(); URL.revokeObjectURL(syncWorkerUrl);
+            }
+            if (type === 'error') { console.error('Sync failed:', msg); els.skeletonList.innerHTML = `<li class="empty-state">同步失败: ${msg}<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">刷新重试</button></li>`; els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 300); worker.terminate(); }
+          };
         } catch (e) { console.error('DB Init Error:', e); els.skeletonList.innerHTML = '<li class="empty-state">浏览器不支持本地存储</li>'; }
       };
       checkAndSeed();
