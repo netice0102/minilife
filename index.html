@@ -374,7 +374,7 @@
         const cursorReq = index.openCursor(range, dir); const results = []; let cursorKey = null, traversed = 0;
         cursorReq.onsuccess = (e) => {
           const cursor = e.target.result;
-          if (!cursor || results.length >= limit || traversed >= 5000) { resolve({ data: results, hasMore: !!cursor, lastKey: cursorKey }); return; }
+          if (!cursor || results.length >= limit || traversed >= 500) { resolve({ data: results, hasMore: !!cursor, lastKey: cursorKey }); return; }
           traversed++; const item = cursor.value; let match = true;
           if (filter.category && item.category !== filter.category) match = false;
           if (filter.mood && item.mood !== filter.mood) match = false;
@@ -399,7 +399,7 @@
       return new Promise((resolve) => {
         cursor.onsuccess = (e) => {
           const cur = e.target.result;
-          if (!cur || count >= 5000) { resolve({ stats, totalMin: Object.values(stats).reduce((a,b)=>a+b,0) }); return; }
+          if (!cur || count >= 500) { resolve({ stats, totalMin: Object.values(stats).reduce((a,b)=>a+b,0) }); return; }
           count++; const item = cur.value; let match = true;
           if (filter.category && item.category !== filter.category) match = false;
           if (filter.mood && item.mood !== filter.mood) match = false;
