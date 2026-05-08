@@ -40,6 +40,19 @@
     .chart-labels { display: flex; justify-content: space-between; margin-top: 6px; padding: 0 2px; }
     .chart-label { font-size: 11px; color: var(--text-sec); }
 
+    .pie-layout { display: flex; align-items: center; gap: 40px; justify-content: center; padding: 16px 0; }
+    .pie-svg { flex-shrink: 0; }
+    .pie-legend { list-style: none; display: flex; flex-direction: column; gap: 14px; padding: 0; margin: 0; }
+    .pie-legend-item { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+    .pie-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .pie-cat { color: var(--text-main); min-width: 2em; }
+    .pie-time { color: var(--text-sec); font-variant-numeric: tabular-nums; }
+    @media (max-width: 767px) {
+      .pie-layout { flex-direction: column; gap: 16px; }
+      .pie-legend { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 8px 16px; }
+      .pie-legend-item { font-size: 13px; }
+    }
+
     .list-container { width: 100%; max-width: 800px; margin: 24px auto; padding: 0 20px 80px; }
     .record-list { list-style: none; min-height: 200px; }
     .record-item { background: var(--card-bg); border-radius: var(--radius); margin-bottom: 16px; box-shadow: var(--shadow); cursor: pointer; transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease); overflow: hidden; position: relative; }
@@ -112,7 +125,8 @@
       <select id="filter-mood"><option value="">全部心情</option><option value="happy">开心 😊</option><option value="calm">平静 🍃</option><option value="focus">专注 🎯</option><option value="tired">疲惫 ☕</option><option value="anxious">焦虑 ⛈️</option></select>
       <select id="filter-date"><option value="">时间范围</option><option value="today">今天</option><option value="3days">近3天</option><option value="7days">近7天</option></select>
       <select id="sort-type"><option value="time-desc">时间倒序 (最新)</option><option value="time-asc">时间正序 (最早)</option><option value="duration-desc">用时最长</option><option value="duration-asc">用时最短</option></select>
-      <label class="chart-toggle"><input type="checkbox" id="toggle-chart"><span>显示统计图表</span></label>
+      <label class="chart-toggle"><input type="checkbox" id="toggle-chart"><span>月柱图📊</span></label>
+      <label class="chart-toggle"><input type="checkbox" id="toggle-pie"><span>今日饼图🥧</span></label>
     </section>
   </div>
 
@@ -123,6 +137,14 @@
     </div>
     <div id="chart-wrapper" class="chart-wrapper"></div>
     <div id="chart-labels" class="chart-labels"></div>
+  </section>
+
+  <section id="pie-container" class="chart-container hidden">
+    <div class="chart-header">
+      <span class="chart-title">今日分类耗时</span>
+      <span class="chart-total" id="pie-total-text">总计: 0分钟</span>
+    </div>
+    <div id="pie-wrapper" class="pie-layout"></div>
   </section>
 
   <main class="list-container">
@@ -150,10 +172,13 @@
       loadMoreBtn: document.getElementById('load-more'), progressBar: document.getElementById('progress-bar'),
       chartContainer: document.getElementById('chart-container'), chartWrapper: document.getElementById('chart-wrapper'),
       chartLabels: document.getElementById('chart-labels'), chartTotal: document.getElementById('chart-total-text'),
-      toggleChart: document.getElementById('toggle-chart'), seedStatus: document.getElementById('seed-status')
+      toggleChart: document.getElementById('toggle-chart'), togglePie: document.getElementById('toggle-pie'),
+      pieContainer: document.getElementById('pie-container'), pieWrapper: document.getElementById('pie-wrapper'),
+      pieTotal: document.getElementById('pie-total-text'), seedStatus: document.getElementById('seed-status')
     };
     const MOODS = { happy: { name: '开心', icon: '😊' }, calm: { name: '平静', icon: '🍃' }, focus: { name: '专注', icon: '🎯' }, tired: { name: '疲惫', icon: '☕' }, anxious: { name: '焦虑', icon: '⛈️' } };
-    const appState = { filter: { category: '', mood: '', date: '' }, sort: 'time-desc', limit: 10, lastKey: null, hasMore: true, loading: false, isSeeding: false, showChart: false, totalCount: 0, loadedCount: 0 };
+    const CATEGORY_COLORS = { '工作': '#7EC8E3', '学习': '#A8D5BA', '生活': '#F9D976', '运动': '#C3AED6', '娱乐': '#F5B7B1' };
+    const appState = { filter: { category: '', mood: '', date: '' }, sort: 'time-desc', limit: 10, lastKey: null, hasMore: true, loading: false, isSeeding: false, showChart: false, showPie: false, totalCount: 0, loadedCount: 0 };
     
     // ========== Inline Worker (使用IDB封装) ==========
     function syncWorkerLogic() {
@@ -410,6 +435,29 @@
       });
     }
 
+    // ========== 今日饼图数据聚合（不受筛选影响） ==========
+    async function fetchPieStats() {
+      const db = await new Promise((res, rej) => { const req = indexedDB.open(DB_NAME, 1); req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const range = IDBKeyRange.bound(todayStart, now.getTime());
+      const cursor = store.index('time').openCursor(range);
+      const stats = {}; let total = 0;
+      return new Promise((resolve) => {
+        cursor.onsuccess = (e) => {
+          const cur = e.target.result;
+          if (!cur) { resolve({ stats, total }); return; }
+          const item = cur.value;
+          stats[item.category] = (stats[item.category] || 0) + item.durationMinutes;
+          total += item.durationMinutes;
+          cur.continue();
+        };
+        cursor.onerror = () => resolve({ stats: {}, total: 0 });
+      });
+    }
+
     // ========== 渲染逻辑 ==========
     function renderList(items, append = false) {
       if (!append) els.recordList.innerHTML = '';
@@ -426,7 +474,7 @@
       requestAnimationFrame(() => els.recordList.querySelectorAll('.animate-in:not(.show)').forEach((el, i) => setTimeout(() => el.classList.add('show'), i * 40)));
     }
 
-    function renderChart(statsData) {
+    function renderBarChart(statsData) {
       const { stats, totalMin } = statsData;
       els.chartTotal.textContent = `总计: ${parseDuration(totalMin)}`;
       const days = Object.keys(stats).reverse();
@@ -440,6 +488,50 @@
         if (i % 5 === 0 || i === days.length - 1) { const label = document.createElement('span'); label.className = 'chart-label'; label.textContent = day.slice(5); els.chartLabels.appendChild(label); }
       });
       requestAnimationFrame(() => els.chartWrapper.querySelectorAll('.chart-bar').forEach(b => b.style.height = b.style.height));
+    }
+
+    // ========== 饼图渲染 ==========
+    function renderPieChart(data) {
+      const { stats, total } = data;
+      els.pieTotal.textContent = `总计: ${parseDuration(total)}`;
+      const categories = Object.keys(stats);
+      if (!categories.length) {
+        els.pieWrapper.innerHTML = '<div class="empty-state" style="padding:20px">今日暂无记录</div>';
+        return;
+      }
+      const sorted = categories.sort((a, b) => stats[b] - stats[a]);
+      const size = 200, cx = size / 2, cy = size / 2, r = 80;
+      let cumulative = 0, paths = '';
+      sorted.forEach((cat) => {
+        const val = stats[cat], angle = (val / total) * 360;
+        if (angle <= 0) return;
+        if (Math.abs(angle - 360) < 0.01) {
+          paths += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${CATEGORY_COLORS[cat] || '#ccc'}" stroke="#fff" stroke-width="2"/>`;
+        } else {
+          const startRad = (cumulative - 90) * Math.PI / 180;
+          const endRad = (cumulative + angle - 90) * Math.PI / 180;
+          const x1 = cx + r * Math.cos(startRad), y1 = cy + r * Math.sin(startRad);
+          const x2 = cx + r * Math.cos(endRad), y2 = cy + r * Math.sin(endRad);
+          paths += `<path d="M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${angle > 180 ? 1 : 0} 1 ${x2} ${y2} Z" fill="${CATEGORY_COLORS[cat] || '#ccc'}" stroke="#fff" stroke-width="2"/>`;
+        }
+        cumulative += angle;
+      });
+      els.pieWrapper.innerHTML = `
+        <svg class="pie-svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+          ${paths}
+          <circle cx="${cx}" cy="${cy}" r="30" fill="var(--card-bg)"/>
+          <text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="18" font-weight="600" fill="var(--text-main)">${total}</text>
+          <text x="${cx}" y="${cy+13}" text-anchor="middle" font-size="11" fill="var(--text-sec)">分钟</text>
+        </svg>
+        <ul class="pie-legend">
+          ${sorted.map(cat => `
+            <li class="pie-legend-item">
+              <span class="pie-dot" style="background:${CATEGORY_COLORS[cat] || '#ccc'}"></span>
+              <span class="pie-cat">${cat}</span>
+              <span class="pie-time">共计 ${parseDuration(stats[cat])}</span>
+            </li>
+          `).join('')}
+        </ul>`;
     }
 
     async function fetchData(reset = true) {
@@ -458,18 +550,27 @@
           const remaining = appState.totalCount - appState.loadedCount;
           els.loadMoreBtn.textContent = appState.hasMore ? `加载更多（剩余 ${remaining} 条）` : '已加载全部';
         }
-        if (appState.showChart) updateChart();
+        updateCharts();
       } catch (e) { console.error('Query failed:', e); }
       appState.loading = false;
       els.loadMoreBtn.disabled = !appState.hasMore;
     }
 
-    async function updateChart() {
-      if (!appState.showChart) return;
+    async function updateBarChart() {
+      if (!appState.showChart) { els.chartContainer.classList.add('hidden'); return; }
       els.chartContainer.classList.remove('hidden');
       const { stats, totalMin } = await fetchChartStats(appState.filter, 30);
-      renderChart({ stats, totalMin });
+      renderBarChart({ stats, totalMin });
     }
+
+    async function updatePieChart() {
+      if (!appState.showPie) { els.pieContainer.classList.add('hidden'); return; }
+      els.pieContainer.classList.remove('hidden');
+      const { stats, total } = await fetchPieStats();
+      renderPieChart({ stats, total });
+    }
+
+    async function updateCharts() { updateBarChart(); updatePieChart(); }
 
     const handleFilterChange = debounce(() => fetchData(true), 300);
 
@@ -479,7 +580,11 @@
       els.sortType.addEventListener('change', (e) => { appState.sort = e.target.value; handleFilterChange(); });
       els.toggleChart.addEventListener('change', (e) => {
         appState.showChart = e.target.checked;
-        if (appState.showChart) updateChart(); else els.chartContainer.classList.add('hidden');
+        updateBarChart();
+      });
+      els.togglePie.addEventListener('change', (e) => {
+        appState.showPie = e.target.checked;
+        updatePieChart();
       });
       els.loadMoreBtn.addEventListener('click', () => fetchData(false));
       els.recordList.addEventListener('click', (e) => { const card = e.target.closest('.record-item'); if (card) card.classList.toggle('expanded'); });
@@ -511,7 +616,7 @@
             els.loadMoreBtn.classList.remove('hidden');
             // 先从IndexedDB加载数据（必须在isSeeding之前）
             fetchData(true);
-            if (appState.showChart) updateChart();
+            updateCharts();
             // 再设置isSeeding，让Worker在后台检查
             appState.isSeeding = true;
           } else {
@@ -540,14 +645,14 @@
                 els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden');
                 els.progressBar.style.width = '100%';
                 setTimeout(() => els.progressBar.classList.add('hidden'), 300);
-                fetchData(true); if (appState.showChart) updateChart();
+                fetchData(true); updateCharts();
               }
             }
             if (type === 'complete') {
               appState.isSeeding = false;
               els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 600);
               if (e.data.totalCount !== undefined) appState.totalCount = e.data.totalCount;
-              if (!initialFetchDone) { els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden'); fetchData(true); if (appState.showChart) updateChart(); }
+              if (!initialFetchDone) { els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden'); fetchData(true); updateCharts(); }
               worker.terminate(); URL.revokeObjectURL(syncWorkerUrl);
             }
             if (type === 'error') { appState.isSeeding = false; console.error('Sync failed:', msg); els.skeletonList.innerHTML = `<li class="empty-state">同步失败: ${msg}<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">刷新重试</button></li>`; els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 300); worker.terminate(); }
