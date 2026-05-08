@@ -65,8 +65,8 @@
     .details-content { padding-top: 12px; border-top: 1px dashed var(--border); font-size: 14px; color: var(--text-sec); line-height: 1.7; }
     .detail-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
     .detail-row:last-child { margin-bottom: 0; }
-    .detail-label { font-size: 13px; color: var(--text-sec); }
-    .detail-value { font-size: 14px; color: var(--text-main); }
+    .detail-label { font-size: 13px; color: var(--text-sec); flex-shrink: 0; width: 5em; }
+    .detail-value { font-size: 14px; color: var(--text-main); flex: 1; min-width: 0; word-break: break-word; }
     
     .load-more-btn { display: block; width: 100%; padding: 12px; margin-top: 16px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 14px; font-weight: 500; color: var(--accent); cursor: pointer; text-align: center; transition: background 0.2s var(--ease), transform 0.15s var(--ease); user-select: none; }
     .load-more-btn:hover:not(:disabled) { background: rgba(74, 144, 164, 0.08); }
@@ -153,7 +153,7 @@
       toggleChart: document.getElementById('toggle-chart'), seedStatus: document.getElementById('seed-status')
     };
     const MOODS = { happy: { name: '开心', icon: '😊' }, calm: { name: '平静', icon: '🍃' }, focus: { name: '专注', icon: '🎯' }, tired: { name: '疲惫', icon: '☕' }, anxious: { name: '焦虑', icon: '⛈️' } };
-    const appState = { filter: { category: '', mood: '', date: '' }, sort: 'time-desc', limit: 10, lastKey: null, hasMore: true, loading: false, isSeeding: false, showChart: false };
+    const appState = { filter: { category: '', mood: '', date: '' }, sort: 'time-desc', limit: 10, lastKey: null, hasMore: true, loading: false, isSeeding: false, showChart: false, totalCount: 0, loadedCount: 0 };
     
     // ========== Inline Worker (使用IDB封装) ==========
     function syncWorkerLogic() {
@@ -249,7 +249,7 @@
           if (localVer === remoteVer && !forceRefresh) {
             self.postMessage({ type: 'status', msg: '版本一致，使用本地数据' });
             const storedSynced = (await idb.getMeta('synced_files')) || [];
-            self.postMessage({ type: 'complete', total: 0, synced: true, msg: '已是最新' });
+            self.postMessage({ type: 'complete', total: 0, synced: true, msg: '已是最新', totalCount: storedSynced.length });
             return;
           }
 
@@ -323,7 +323,7 @@
                 if (batch.length >= batchSize || idx >= queue.length) {
                   await idb.putMany(storeName, batch);
                   batch = [];
-                  self.postMessage({ type: 'progress', current: processed, total: newFilesList.length });
+                  self.postMessage({ type: 'progress', current: processed, total: newFilesList.length, totalCount: files.length });
                 }
               } catch (err) {
                 console.warn(`⚠️ 跳过 ${file}:`, err.message);
@@ -341,12 +341,12 @@
           await idb.setMeta('synced_files', Array.from(new Set([...storedSynced, ...newFilesList])));
           await idb.setMeta('version', remoteVer);
 
-          self.postMessage({ type: 'complete', total: processed, synced: false });
+          self.postMessage({ type: 'complete', total: processed, synced: false, totalCount: files.length });
           } else {
             // 没有新增，但仍需更新版本号
             await idb.setMeta('synced_files', files);
             await idb.setMeta('version', remoteVer);
-            self.postMessage({ type: 'complete', total: 0, synced: true, msg: '已是最新' });
+            self.postMessage({ type: 'complete', total: 0, synced: true, msg: '已是最新', totalCount: files.length });
           }
         } catch (err) { 
           self.postMessage({ type: 'error', msg: err.message }); 
@@ -446,15 +446,22 @@
       if (appState.loading || appState.isSeeding) return;
       appState.loading = true;
       els.loadMoreBtn.textContent = '加载中...'; els.loadMoreBtn.disabled = true;
-      if (reset) { appState.lastKey = null; appState.hasMore = true; }
+      if (reset) { appState.lastKey = null; appState.hasMore = true; appState.loadedCount = 0; }
       try {
         const { data, hasMore, lastKey } = await queryPage({ filter: appState.filter, sort: appState.sort, limit: appState.limit, lastKey: appState.lastKey });
         appState.lastKey = lastKey; appState.hasMore = hasMore; renderList(data, !reset);
+        appState.loadedCount = reset ? data.length : appState.loadedCount + data.length;
+        const hasFilter = appState.filter.category || appState.filter.mood || appState.filter.date;
+        if (hasFilter) {
+          els.loadMoreBtn.textContent = appState.hasMore ? '加载更多' : '已加载全部';
+        } else {
+          const remaining = appState.totalCount - appState.loadedCount;
+          els.loadMoreBtn.textContent = appState.hasMore ? `加载更多（剩余 ${remaining} 条）` : '已加载全部';
+        }
         if (appState.showChart) updateChart();
       } catch (e) { console.error('Query failed:', e); }
       appState.loading = false;
       els.loadMoreBtn.disabled = !appState.hasMore;
-      els.loadMoreBtn.textContent = appState.hasMore ? '加载更多' : '已加载全部';
     }
 
     async function updateChart() {
@@ -518,12 +525,13 @@
 
           let initialFetchDone = false, uiUpdateTimer = null;
           worker.onmessage = (e) => {
-            const { type, msg, current, total, synced } = e.data;
+            const { type, msg, current, total, synced, totalCount } = e.data;
 
             if (type === 'status' && !initialFetchDone) {
               if (els.seedStatus) els.seedStatus.textContent = msg;
             }
             if (type === 'progress' && !initialFetchDone) {
+              if (totalCount !== undefined) appState.totalCount = totalCount;
               const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
               els.progressBar.style.width = `${Math.max(pct, 5)}%`;
               clearTimeout(uiUpdateTimer); uiUpdateTimer = setTimeout(() => { if (els.seedStatus) els.seedStatus.textContent = msg || `同步中...`; }, 50);
@@ -536,11 +544,13 @@
               }
             }
             if (type === 'complete') {
+              appState.isSeeding = false;
               els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 600);
+              if (e.data.totalCount !== undefined) appState.totalCount = e.data.totalCount;
               if (!initialFetchDone) { els.skeletonList.classList.add('hidden'); els.recordList.classList.remove('hidden'); els.loadMoreBtn.classList.remove('hidden'); fetchData(true); if (appState.showChart) updateChart(); }
               worker.terminate(); URL.revokeObjectURL(syncWorkerUrl);
             }
-            if (type === 'error') { console.error('Sync failed:', msg); els.skeletonList.innerHTML = `<li class="empty-state">同步失败: ${msg}<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">刷新重试</button></li>`; els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 300); worker.terminate(); }
+            if (type === 'error') { appState.isSeeding = false; console.error('Sync failed:', msg); els.skeletonList.innerHTML = `<li class="empty-state">同步失败: ${msg}<br><button onclick="location.reload()" style="margin-top:10px;padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">刷新重试</button></li>`; els.progressBar.style.width = '100%'; setTimeout(() => els.progressBar.classList.add('hidden'), 300); worker.terminate(); }
           };
         } catch (e) { console.error('DB Init Error:', e); els.skeletonList.innerHTML = '<li class="empty-state">浏览器不支持本地存储</li>'; }
       };

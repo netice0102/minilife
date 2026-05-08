@@ -1,0 +1,9 @@
+{
+  "id": "8",
+  "time": "2026-05-07T10:15:54",
+  "event": "读《深入理解计算机系统》",
+  "category": "学习",
+  "mood": "focus",
+  "durationMinutes": 60,
+  "details": "阅读了第三章，关于程序的机器级表示"
+}

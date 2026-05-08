@@ -1,9 +1,9 @@
 {
   "id": "4",
-  "time": "2026-05-07T21:20:03",
-  "event": "喝酒",
-  "category": "生活",
-  "mood": "tired",
-  "durationMinutes": 120,
-  "details": "晚上喝了几杯，2小时喝多了。有点醉"
+  "time": "2026-05-08T08:00:08",
+  "event": "写周报4",
+  "category": "工作",
+  "mood": "focus",
+  "durationMinutes": 45,
+  "details": "整理了本周的工作进展和下周计划2"
 }

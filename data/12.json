@@ -1,0 +1,9 @@
+{
+  "id": "12",
+  "time": "2026-05-05T15:00:55",
+  "event": "打扫房间",
+  "category": "生活",
+  "mood": "tired",
+  "durationMinutes": 60,
+  "details": "周末大扫除，清理了很多杂物"
+}
