@@ -121,7 +121,7 @@
   <div class="controls-wrapper">
     <button id="toggle-filters" aria-label="展开或收起筛选面板">筛选与排序 ▾</button>
     <section id="controls" class="controls-panel" aria-label="列表筛选与排序">
-      <select id="filter-category"><option value="">全部类别</option><option value="工作">工作</option><option value="学习">学习</option><option value="生活">生活</option><option value="运动">运动</option><option value="娱乐">娱乐</option></select>
+      <select id="filter-category"><option value="">全部类别</option><option value="工作">工作</option><option value="学习">学习</option><option value="生活">生活</option><option value="运动">运动</option><option value="娱乐">娱乐</option><option value="睡眠">睡眠</option></select>
       <select id="filter-mood"><option value="">全部心情</option><option value="happy">开心 😊</option><option value="calm">平静 🍃</option><option value="focus">专注 🎯</option><option value="tired">疲惫 ☕</option><option value="anxious">焦虑 ⛈️</option></select>
       <select id="filter-date"><option value="">时间范围</option><option value="today">今天</option><option value="3days">近3天</option><option value="7days">近7天</option></select>
       <select id="sort-type"><option value="time-desc">时间倒序 (最新)</option><option value="time-asc">时间正序 (最早)</option><option value="duration-desc">用时最长</option><option value="duration-asc">用时最短</option></select>
@@ -177,7 +177,7 @@
       pieTotal: document.getElementById('pie-total-text'), seedStatus: document.getElementById('seed-status')
     };
     const MOODS = { happy: { name: '开心', icon: '😊' }, calm: { name: '平静', icon: '🍃' }, focus: { name: '专注', icon: '🎯' }, tired: { name: '疲惫', icon: '☕' }, anxious: { name: '焦虑', icon: '⛈️' } };
-    const CATEGORY_COLORS = { '工作': '#7EC8E3', '学习': '#A8D5BA', '生活': '#F9D976', '运动': '#C3AED6', '娱乐': '#F5B7B1' };
+    const CATEGORY_COLORS = { '工作': '#7EC8E3', '学习': '#A8D5BA', '生活': '#F9D976', '运动': '#C3AED6', '娱乐': '#F5B7B1', '睡眠': '#9FA8DA' };
     const appState = { filter: { category: '', mood: '', date: '' }, sort: 'time-desc', limit: 10, lastKey: null, hasMore: true, loading: false, isSeeding: false, showChart: false, showPie: false, totalCount: 0, loadedCount: 0 };
     
     // ========== Inline Worker (使用IDB封装) ==========
